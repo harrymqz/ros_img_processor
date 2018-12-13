@@ -9,3 +9,4 @@ $ roslaunch ros_img_processor ros_img_processor.launch
 
 ## Tip
 Check your webcam encodings (yuyv,mjpeg,...) and set them accordingly at file launch/usb_camera.launch
+
