@@ -7,6 +7,8 @@
 //Eigen
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
+using Eigen::VectorXd;
+using Eigen::Matrix3d;
 
 //ROS headers for image I/O
 #include <image_transport/image_transport.h>

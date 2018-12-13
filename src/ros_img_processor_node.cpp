@@ -4,16 +4,16 @@ RosImgProcessorNode::RosImgProcessorNode() :
     nh_(ros::this_node::getName()),
     img_tp_(nh_)
 {
-	//loop rate [hz], Could be set from a yaml file
-	rate_=10;
+    //loop rate [hz], Could be set from a yaml file
+    rate_=10;
 
-	//sets publishers
-	image_pub_ = img_tp_.advertise("image_out", 100);
-	marker_publisher_ = nh_.advertise<visualization_msgs::Marker>( "arrow_marker", 1 );
+    //sets publishers
+    image_pub_ = img_tp_.advertise("image_out", 100);
+    marker_publisher_ = nh_.advertise<visualization_msgs::Marker>( "arrow_marker", 1 );
 
-	//sets subscribers
-	image_subs_ = img_tp_.subscribe("image_in", 1, &RosImgProcessorNode::imageCallback, this);
-	camera_info_subs_ = nh_.subscribe("camera_info_in", 100, &RosImgProcessorNode::cameraInfoCallback, this);
+    //sets subscribers
+    image_subs_ = img_tp_.subscribe("image_in", 1, &RosImgProcessorNode::imageCallback, this);
+    camera_info_subs_ = nh_.subscribe("camera_info_in", 100, &RosImgProcessorNode::cameraInfoCallback, this);
 }
 
 RosImgProcessorNode::~RosImgProcessorNode()
@@ -23,7 +23,7 @@ RosImgProcessorNode::~RosImgProcessorNode()
 
 void RosImgProcessorNode::process()
 {
-    cv::Rect_<int> box;
+    // cv::Rect_<int> box;
 
     //check if new image is there
     if ( cv_img_ptr_in_ != nullptr )
@@ -31,19 +31,78 @@ void RosImgProcessorNode::process()
         // copy the input image to the out one
         cv_img_out_.image = cv_img_ptr_in_->image;
 
-		// find the ball
-		//TODO
+        /**
+         * - - - - - - - - - - - - - - - - - - FIND THE BALL - - - - - - - - - - - - - - - - - -
+         */
+        
+        // Constants
+        const int GAUSSIAN_BLUR_SIZE = 7;
+        const double GAUSSIAN_BLUR_SIGMA = 2;
+        const double HOUGH_ACCUM_RESOLUTION = 2;
+        const double CANNY_EDGE_TH = 150;
+        const double MIN_CIRCLE_DIST = 40;
+        const double HOUGH_ACCUM_TH = 70;
+        const int MIN_RADIUS = 20;
+        const int MAX_RADIUS = 100;
+        
+        cv::Mat gray_image;
+        std::vector<cv::Vec3f> circles;
+        cv::Point center;
+        int radius;
 
-		// find the direction vector
-		//TODO
-		direction_ << 1,1,2.5;  // just to draw something with the arrow marker
+        // If input image is RGB, convert it to gray 
+        cv::cvtColor(cv_img_out_.image, gray_image, CV_BGR2GRAY);
 
-        // draw a bounding box around the ball
-        box.x = (cv_img_ptr_in_->image.cols/2)-10;
-        box.y = (cv_img_ptr_in_->image.rows/2)-10;
-        box.width = 20;
-        box.height = 20;
-        cv::rectangle(cv_img_out_.image, box, cv::Scalar(0,255,255), 3);
+        // Reduce the noise so we avoid false circle detection
+        // https://docs.opencv.org/2.4/modules/imgproc/doc/filtering.html?highlight=gaussianblur#gaussianblur
+        cv::GaussianBlur( gray_image, gray_image, cv::Size(GAUSSIAN_BLUR_SIZE, GAUSSIAN_BLUR_SIZE), GAUSSIAN_BLUR_SIGMA );
+
+        // Apply the Hough Transform to find the circles
+        // https://docs.opencv.org/2.4/modules/imgproc/doc/feature_detection.html?highlight=houghcircles#houghcircles
+        cv::HoughCircles( gray_image, circles, CV_HOUGH_GRADIENT, HOUGH_ACCUM_RESOLUTION, MIN_CIRCLE_DIST, CANNY_EDGE_TH, HOUGH_ACCUM_TH, MIN_RADIUS, MAX_RADIUS );
+        
+        // Draw circles on the image      
+        for (unsigned int ii = 0; ii < circles.size(); ii++ )
+        {
+            if ( circles[ii][0] != -1 )
+            {
+                center = cv::Point(cvRound(circles[ii][0]), cvRound(circles[ii][1]));
+                radius = cvRound(circles[ii][2]);
+                // Circle center in green
+                // https://docs.opencv.org/2.4/modules/core/doc/drawing_functions.html?highlight=circle#circle
+                cv::circle(cv_img_out_.image, center, 5, cv::Scalar(0,0,255), -1, 8, 0 );
+
+                // Circle perimeter in red
+                cv::circle(cv_img_out_.image, center, radius, cv::Scalar(0,0,255), 3, 8, 0 );
+            }
+        }
+
+        // Set the vector of the ball/arrow
+        VectorXd v(3);
+        v(0) = center.x;
+        v(1) = center.x;
+        v(2) = 1;
+        v = v.transpose();
+
+        // Inverse the matrix to be able to multipliy
+        Matrix3d matrixK_inv = matrixK_.inverse();
+        direction_ = matrixK_inv*v;
+
+        /**
+         * - - - - - - - - - - - - - - - - - - FIND THE DIRECTION VECTOR - - - - - - - - - - - - - - - - - -
+         */
+        // direction_ << 1,1,2.5;  // just to draw something with the arrow marker
+
+        /**
+         * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+         */
+
+        // // draw a bounding box around the ball
+        // box.x = (cv_img_ptr_in_->image.cols/2)-10;
+        // box.y = (cv_img_ptr_in_->image.rows/2)-10;
+        // box.width = 20;
+        // box.height = 20;
+        // cv::rectangle(cv_img_out_.image, box, cv::Scalar(0,255,255), 3);
     }
 
     //reset input image
@@ -52,7 +111,7 @@ void RosImgProcessorNode::process()
 
 void RosImgProcessorNode::publishImage()
 {
-	if( !cv_img_out_.image.data ) return;
+    if( !cv_img_out_.image.data ) return;
 
     cv_img_out_.header.seq ++;
     cv_img_out_.header.stamp = ros::Time::now();
@@ -63,61 +122,61 @@ void RosImgProcessorNode::publishImage()
 
 void RosImgProcessorNode::publishMarker()
 {
-	if( !cv_img_out_.image.data) return; //to assure that we enter here when an image is available
+    if( !cv_img_out_.image.data) return; //to assure that we enter here when an image is available
 
-	visualization_msgs::Marker marker_msg;
-	std::ptrdiff_t idx;
-	Eigen::Matrix3d rotation;
+    visualization_msgs::Marker marker_msg;
+    std::ptrdiff_t idx;
+    Eigen::Matrix3d rotation;
 
-	//from vector direction to quaternion
-	rotation.block<3,1>(0,0) = direction_;
-	direction_.minCoeff(&idx);
-	switch(idx)
-	{
-		case 0:
-			rotation.block<3,1>(0,1) << 0,direction_(2),-direction_(1);
-			break;
-		case 1:
-			rotation.block<3,1>(0,1) << -direction_(2),0,direction_(0);
-			break;
-		case 2:
-			rotation.block<3,1>(0,1) << direction_(1),-direction_(0),0;
-			break;
-		default:
-			break;
-	}
-	rotation.block<3,1>(0,2) = rotation.block<3,1>(0,0).cross(rotation.block<3,1>(0,1));
-	rotation.block<3,1>(0,0) = rotation.block<3,1>(0,0)/rotation.block<3,1>(0,0).norm();
-	rotation.block<3,1>(0,1) = rotation.block<3,1>(0,1)/rotation.block<3,1>(0,1).norm();
-	rotation.block<3,1>(0,2) = rotation.block<3,1>(0,2)/rotation.block<3,1>(0,2).norm();
-	//std::cout << "rotation: " << std::endl << rotation << std::endl;
-	Eigen::Quaterniond quaternion(rotation);
+    //from vector direction to quaternion
+    rotation.block<3,1>(0,0) = direction_;
+    direction_.minCoeff(&idx);
+    switch(idx)
+    {
+        case 0:
+            rotation.block<3,1>(0,1) << 0,direction_(2),-direction_(1);
+            break;
+        case 1:
+            rotation.block<3,1>(0,1) << -direction_(2),0,direction_(0);
+            break;
+        case 2:
+            rotation.block<3,1>(0,1) << direction_(1),-direction_(0),0;
+            break;
+        default:
+            break;
+    }
+    rotation.block<3,1>(0,2) = rotation.block<3,1>(0,0).cross(rotation.block<3,1>(0,1));
+    rotation.block<3,1>(0,0) = rotation.block<3,1>(0,0)/rotation.block<3,1>(0,0).norm();
+    rotation.block<3,1>(0,1) = rotation.block<3,1>(0,1)/rotation.block<3,1>(0,1).norm();
+    rotation.block<3,1>(0,2) = rotation.block<3,1>(0,2)/rotation.block<3,1>(0,2).norm();
+    //std::cout << "rotation: " << std::endl << rotation << std::endl;
+    Eigen::Quaterniond quaternion(rotation);
 
-	// fill the arrow message
-	marker_msg.header.stamp = ros::Time::now();
-	marker_msg.header.frame_id = "camera";
-	marker_msg.ns = "direction_marker";
-	marker_msg.id = 1;
-	marker_msg.action = visualization_msgs::Marker::ADD;
-	marker_msg.type = visualization_msgs::Marker::ARROW;
-	marker_msg.pose.position.x = 0;
-	marker_msg.pose.position.y = 0;
-	marker_msg.pose.position.z = 0;
-	marker_msg.pose.orientation.x = quaternion.x();
-	marker_msg.pose.orientation.y = quaternion.y();
-	marker_msg.pose.orientation.z = quaternion.z();
-	marker_msg.pose.orientation.w = quaternion.w();
-	marker_msg.scale.x = 0.8;
-	marker_msg.scale.y = 0.02;
-	marker_msg.scale.z = 0.02;
-	marker_msg.color.r = 1.0;
-	marker_msg.color.g = 0.0;
-	marker_msg.color.b = 1.0;
-	marker_msg.color.a = 1.0;
-	marker_msg.lifetime = ros::Duration(0.2);
+    // fill the arrow message
+    marker_msg.header.stamp = ros::Time::now();
+    marker_msg.header.frame_id = "camera";
+    marker_msg.ns = "direction_marker";
+    marker_msg.id = 1;
+    marker_msg.action = visualization_msgs::Marker::ADD;
+    marker_msg.type = visualization_msgs::Marker::ARROW;
+    marker_msg.pose.position.x = 0;
+    marker_msg.pose.position.y = 0;
+    marker_msg.pose.position.z = 0;
+    marker_msg.pose.orientation.x = quaternion.x();
+    marker_msg.pose.orientation.y = quaternion.y();
+    marker_msg.pose.orientation.z = quaternion.z();
+    marker_msg.pose.orientation.w = quaternion.w();
+    marker_msg.scale.x = 0.8;
+    marker_msg.scale.y = 0.02;
+    marker_msg.scale.z = 0.02;
+    marker_msg.color.r = 1.0;
+    marker_msg.color.g = 0.0;
+    marker_msg.color.b = 1.0;
+    marker_msg.color.a = 1.0;
+    marker_msg.lifetime = ros::Duration(0.2);
 
-	//publish marker
-	marker_publisher_.publish(marker_msg);
+    //publish marker
+    marker_publisher_.publish(marker_msg);
 }
 
 double RosImgProcessorNode::getRate() const
@@ -141,8 +200,8 @@ void RosImgProcessorNode::imageCallback(const sensor_msgs::ImageConstPtr& _msg)
 
 void RosImgProcessorNode::cameraInfoCallback(const sensor_msgs::CameraInfo & _msg)
 {
-	matrixK_  << _msg.K[0],_msg.K[1],_msg.K[2],
+    matrixK_  << _msg.K[0],_msg.K[1],_msg.K[2],
                  _msg.K[3],_msg.K[4],_msg.K[5],
                  _msg.K[6],_msg.K[7],_msg.K[8];
-	//std::cout << "matrixK: " << std::endl << matrixK_ << std::endl;
+    //std::cout << "matrixK: " << std::endl << matrixK_ << std::endl;
 }
